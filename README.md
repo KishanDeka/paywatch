@@ -142,13 +142,70 @@ The Stage 2 XGBoost model uses `scale_pos_weight` optimization to account for th
 
 ---
 
-# Two-Stage ML Pipeline
+# End-to-end pipeline
 
-## Stage 1 — LSTM Autoencoder
+## Kafka Streaming
+
+Kafka acts as the central event-streaming layer.
+
+The primary topic is:
+
+```text
+transactions-stream
+```
+
+The producer publishes transaction records to Kafka, while the FastAPI consumer subscribes to the stream.
+
+```text
+Producer
+   │
+   ▼
+Kafka Broker
+   │
+   ▼
+transactions-stream
+   │
+   ▼
+Consumer
+```
+
+This decouples transaction generation from model inference and allows the consumer service to process events independently.
+
+---
+
+## Producer Service
+
+The producer implements a CSV replay engine.
+
+Location:
+
+```text
+producer/producer.py
+```
+
+Its responsibilities include:
+
+1. Reading transactions from the dataset.
+2. Converting records into streaming events.
+3. Publishing events to Kafka.
+4. Simulating a real-time transaction stream.
+
+The producer is containerized using:
+
+```text
+producer/Dockerfile
+```
+
+---
+
+
+## Two-Stage ML Pipeline
+
+### Stage 1 — LSTM Autoencoder
 
 The first model performs unsupervised anomaly detection.
 
-### Training
+#### Training
 
 The Autoencoder is trained only on normal transactions:
 
@@ -168,7 +225,7 @@ T = 10
 
 It learns to reconstruct normal transaction sequences.
 
-### Inference
+#### Inference
 
 For each rolling sequence:
 
@@ -199,7 +256,7 @@ Loss > Threshold
 
 ---
 
-## Stage 2 — XGBoost Fraud Classifier
+### Stage 2 — XGBoost Fraud Classifier
 
 Only transactions identified as anomalous by Stage 1 are passed to the supervised classifier.
 
@@ -224,6 +281,210 @@ P(Fraud) >= 0.5
 The probability threshold can be adjusted according to the desired precision/recall trade-off.
 
 ---
+
+### Rolling Sequence State
+
+The Stage 1 Autoencoder operates on a sliding sequence of:
+
+```text
+T = 10
+```
+
+transactions.
+
+The consumer maintains a rolling buffer:
+
+```text
+Transaction 1
+Transaction 2
+Transaction 3
+...
+Transaction 10
+        │
+        ▼
+  LSTM Autoencoder
+```
+
+When a new transaction arrives, the window advances:
+
+```text
+Before:
+
+[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+New transaction: 11
+
+After:
+
+[2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+```
+
+This allows the model to capture temporal behavior instead of treating every transaction as an independent observation.
+
+---
+
+## Fraud Decision Logic
+
+The complete decision tree is:
+
+```text
+                    Transaction
+                         │
+                         ▼
+                 StandardScaler
+                         │
+                         ▼
+                 Rolling Window
+                      T = 10
+                         │
+                         ▼
+                LSTM Autoencoder
+                         │
+                  Reconstruction
+                       Loss
+                         │
+               ┌─────────┴─────────┐
+               │                   │
+          Loss <= T            Loss > T
+               │                   │
+               ▼                   ▼
+            Normal             Anomaly
+               │                   │
+               │                   ▼
+               │              XGBoost
+               │                   │
+               │              Fraud Prob.
+               │                   │
+               │          ┌────────┴────────┐
+               │          │                 │
+               │       < 0.5              >= 0.5
+               │          │                 │
+               ▼          ▼                 ▼
+             Pass     Low Risk         High Risk
+                      Audit Log       Alert & Block
+```
+
+---
+
+## Consumer Service
+
+The consumer is implemented using **FastAPI**.
+
+Location:
+
+```text
+consumer/
+├── main.py
+└── inference.py
+```
+
+### `main.py`
+
+Responsible for:
+
+- FastAPI application setup.
+- Kafka consumption.
+- Stream processing.
+- Health endpoint.
+- Background persistence.
+
+### `inference.py`
+
+Responsible for:
+
+- Feature preprocessing.
+- Rolling-window management.
+- ONNX Runtime sessions.
+- LSTM Autoencoder inference.
+- Reconstruction-loss calculation.
+- XGBoost inference.
+- Risk classification.
+
+---
+
+## ONNX Inference
+
+The production consumer does not need the original training frameworks for inference.
+
+Instead, trained models are exported to ONNX:
+
+```text
+PyTorch LSTM Autoencoder
+          │
+          ▼
+       ONNX
+          │
+          ▼
+ ONNX Runtime Consumer
+```
+
+and:
+
+```text
+XGBoost Classifier
+          │
+          ▼
+       ONNX
+          │
+          ▼
+ ONNX Runtime Consumer
+```
+
+This creates a lightweight inference environment suitable for containerized streaming workloads.
+
+---
+
+
+## Database Layer
+
+PostgreSQL stores transaction events and model decisions for auditing and analysis.
+
+The database layer is organized as:
+
+```text
+db/
+├── init.sql
+├── database.py
+└── models.py
+```
+
+### `init.sql`
+
+Responsible for database initialization, schema setup, and analytical SQL views.
+
+### `database.py`
+
+Contains the database engine and asynchronous connection configuration.
+
+### `models.py`
+
+Defines SQLAlchemy ORM models representing persisted transaction and inference records.
+
+---
+
+## Analytical SQL
+
+The database layer supports analytical processing through PostgreSQL views and temporal aggregations.
+
+Potential analytical workloads include:
+
+- Hourly anomaly counts.
+- Fraud detection rates.
+- Transaction velocity.
+- Rolling transaction metrics.
+- Model prediction distributions.
+- Temporal anomaly trends.
+- Model drift monitoring.
+
+Example:
+
+```sql
+SELECT *
+FROM view_hourly_anomaly_metrics;
+```
+
+---
+
 
 # Technology Stack
 
@@ -286,7 +547,7 @@ The probability threshold can be adjusted according to the desired precision/rec
 
 # Quickstart
 
-## Prerequisites
+## 0. Prerequisites
 
 Install or obtain:
 
@@ -309,7 +570,7 @@ creditcard.csv
 
 ---
 
-# 1. Clone the Repository
+## 1. Clone the Repository
 
 ```bash
 git clone https://github.com/your-username/time-series-anomaly-pipeline.git
@@ -337,7 +598,7 @@ cp /path/to/downloaded/creditcard.csv data/
 
 ---
 
-# 2. Train the Models
+## 2. Train the Models
 
 The machine-learning models are trained offline before the streaming stack is launched.
 
@@ -388,7 +649,7 @@ models/
 
 ---
 
-# 3. Launch the Microservice Stack
+## 3. Launch the Microservice Stack
 
 The project uses Docker Compose to orchestrate the complete streaming environment.
 
@@ -426,7 +687,7 @@ docker-compose logs -f
 
 ---
 
-# 4. Verify the API
+## 4. Verify the API
 
 FastAPI exposes an interactive API documentation page:
 
@@ -444,7 +705,7 @@ A healthy service should return a successful health response.
 
 ---
 
-# 5. Inspect PostgreSQL Metrics
+## 5. Inspect PostgreSQL Metrics
 
 The project includes PostgreSQL views for analytical queries.
 
@@ -486,261 +747,6 @@ cd ..
 
 ---
 
-# Database Layer
-
-PostgreSQL stores transaction events and model decisions for auditing and analysis.
-
-The database layer is organized as:
-
-```text
-db/
-├── init.sql
-├── database.py
-└── models.py
-```
-
-### `init.sql`
-
-Responsible for database initialization, schema setup, and analytical SQL views.
-
-### `database.py`
-
-Contains the database engine and asynchronous connection configuration.
-
-### `models.py`
-
-Defines SQLAlchemy ORM models representing persisted transaction and inference records.
-
----
-
-# Analytical SQL
-
-The database layer supports analytical processing through PostgreSQL views and temporal aggregations.
-
-Potential analytical workloads include:
-
-- Hourly anomaly counts.
-- Fraud detection rates.
-- Transaction velocity.
-- Rolling transaction metrics.
-- Model prediction distributions.
-- Temporal anomaly trends.
-- Model drift monitoring.
-
-Example:
-
-```sql
-SELECT *
-FROM view_hourly_anomaly_metrics;
-```
-
----
-
-# Kafka Streaming
-
-Kafka acts as the central event-streaming layer.
-
-The primary topic is:
-
-```text
-transactions-stream
-```
-
-The producer publishes transaction records to Kafka, while the FastAPI consumer subscribes to the stream.
-
-```text
-Producer
-   │
-   ▼
-Kafka Broker
-   │
-   ▼
-transactions-stream
-   │
-   ▼
-Consumer
-```
-
-This decouples transaction generation from model inference and allows the consumer service to process events independently.
-
----
-
-# Producer Service
-
-The producer implements a CSV replay engine.
-
-Location:
-
-```text
-producer/producer.py
-```
-
-Its responsibilities include:
-
-1. Reading transactions from the dataset.
-2. Converting records into streaming events.
-3. Publishing events to Kafka.
-4. Simulating a real-time transaction stream.
-
-The producer is containerized using:
-
-```text
-producer/Dockerfile
-```
-
----
-
-# Consumer Service
-
-The consumer is implemented using **FastAPI**.
-
-Location:
-
-```text
-consumer/
-├── main.py
-└── inference.py
-```
-
-### `main.py`
-
-Responsible for:
-
-- FastAPI application setup.
-- Kafka consumption.
-- Stream processing.
-- Health endpoint.
-- Background persistence.
-
-### `inference.py`
-
-Responsible for:
-
-- Feature preprocessing.
-- Rolling-window management.
-- ONNX Runtime sessions.
-- LSTM Autoencoder inference.
-- Reconstruction-loss calculation.
-- XGBoost inference.
-- Risk classification.
-
----
-
-# ONNX Inference
-
-The production consumer does not need the original training frameworks for inference.
-
-Instead, trained models are exported to ONNX:
-
-```text
-PyTorch LSTM Autoencoder
-          │
-          ▼
-       ONNX
-          │
-          ▼
- ONNX Runtime Consumer
-```
-
-and:
-
-```text
-XGBoost Classifier
-          │
-          ▼
-       ONNX
-          │
-          ▼
- ONNX Runtime Consumer
-```
-
-This creates a lightweight inference environment suitable for containerized streaming workloads.
-
----
-
-# Rolling Sequence State
-
-The Stage 1 Autoencoder operates on a sliding sequence of:
-
-```text
-T = 10
-```
-
-transactions.
-
-The consumer maintains a rolling buffer:
-
-```text
-Transaction 1
-Transaction 2
-Transaction 3
-...
-Transaction 10
-        │
-        ▼
-  LSTM Autoencoder
-```
-
-When a new transaction arrives, the window advances:
-
-```text
-Before:
-
-[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-
-New transaction: 11
-
-After:
-
-[2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-```
-
-This allows the model to capture temporal behavior instead of treating every transaction as an independent observation.
-
----
-
-# Fraud Decision Logic
-
-The complete decision tree is:
-
-```text
-                    Transaction
-                         │
-                         ▼
-                 StandardScaler
-                         │
-                         ▼
-                 Rolling Window
-                      T = 10
-                         │
-                         ▼
-                LSTM Autoencoder
-                         │
-                  Reconstruction
-                       Loss
-                         │
-               ┌─────────┴─────────┐
-               │                   │
-          Loss <= T            Loss > T
-               │                   │
-               ▼                   ▼
-            Normal             Anomaly
-               │                   │
-               │                   ▼
-               │              XGBoost
-               │                   │
-               │              Fraud Prob.
-               │                   │
-               │          ┌────────┴────────┐
-               │          │                 │
-               │       < 0.5              >= 0.5
-               │          │                 │
-               ▼          ▼                 ▼
-             Pass     Low Risk         High Risk
-                      Audit Log       Alert & Block
-```
-
----
 
 # Configuration
 
