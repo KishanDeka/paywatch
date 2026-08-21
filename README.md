@@ -1,4 +1,4 @@
-# Hybrid Time-Series Anomaly Detection & Fraud Pipeline
+# PayWatch : Real-time transaction anomaly & fraud detection pipeline
 
 A real-time, two-stage streaming pipeline for **time-series anomaly detection and fraud classification**.
 
@@ -6,76 +6,52 @@ The system combines an unsupervised **LSTM Autoencoder** with a supervised **XGB
 
 ---
 
-## 🏗️ System Architecture
+## System Architecture
 
 ```text
-                         ┌─────────────────────┐
-                         │   Replay Producer   │
-                         │     CSV Stream      │
-                         └──────────┬──────────┘
-                                    │
-                                    ▼
-                         ┌─────────────────────┐
-                         │   Apache Kafka      │
-                         │ transactions-stream │
-                         └──────────┬──────────┘
-                                    │
-                                    ▼
-                     ┌────────────────────────────┐
-                     │  FastAPI Consumer Service  │
-                     └──────────────┬─────────────┘
-                                    │
-                                    ▼
-                         ┌─────────────────────┐
-                         │ Feature Preprocessing│
-                         │    StandardScaler   │
-                         └──────────┬──────────┘
-                                    │
-                                    ▼
-                         ┌─────────────────────┐
-                         │   Rolling Buffer    │
-                         │ Sliding Window T=10 │
-                         └──────────┬──────────┘
-                                    │
-                                    ▼
-                  ┌─────────────────────────────────┐
-                  │ Stage 1: Unsupervised Triage    │
-                  │ LSTM Autoencoder - ONNX Runtime │
-                  └────────────────┬────────────────┘
-                                   │
-                     ┌─────────────┴──────────────┐
-                     │                            │
-              Loss ≤ Threshold              Loss > Threshold
-                     │                            │
-                     ▼                            ▼
-              ┌──────────────┐       ┌─────────────────────────┐
-              │ Normal Event │       │ Stage 2: Fraud Scoring  │
-              │  Log & Pass  │       │ XGBoost - ONNX Runtime  │
-              └──────┬───────┘       └────────────┬────────────┘
-                     │                            │
-                     │                 ┌──────────┴──────────┐
-                     │                 │                     │
-                     │           Prob < 0.5             Prob ≥ 0.5
-                     │                 │                     │
-                     │                 ▼                     ▼
-                     │          ┌─────────────┐      ┌──────────────┐
-                     │          │  Audit Log  │      │ Alert & Block│
-                     │          └──────┬──────┘      └──────┬───────┘
-                     │                 │                     │
-                     └─────────────────┴──────────┬──────────┘
-                                                  │
-                                                  ▼
-                                    ┌─────────────────────────┐
-                                    │ Asynchronous Persistence │
-                                    │ SQLAlchemy 2.0 / asyncpg│
-                                    └────────────┬────────────┘
-                                                 │
-                                                 ▼
-                                    ┌─────────────────────────┐
-                                    │      PostgreSQL          │
-                                    │  Tables / SQL Views     │
-                                    └─────────────────────────┘
+                    DATA
+                     │
+                     ▼
+              Kafka Streaming
+                     │
+                     ▼
+            Feature Processing
+                     │
+                     ▼
+           Rolling Time Window
+                  T = 10
+                     │
+                     ▼
+        ┌────────────────────────┐
+        │ Stage 1: LSTM AE       │
+        │ Unsupervised Anomaly   │
+        │ Detection              │
+        └───────────┬────────────┘
+                    │
+              ┌─────┴─────┐
+              │           │
+           Normal       Anomaly
+              │           │
+              │           ▼
+              │      ┌─────────────┐
+              │      │ Stage 2     │
+              │      │ XGBoost     │
+              │      │ Fraud Score │
+              │      └──────┬──────┘
+              │             │
+              │       ┌─────┴─────┐
+              │       │           │
+              │    Low Risk    High Risk
+              │       │           │
+              └───────┴─────┬─────┘
+                            │
+                            ▼
+                    PostgreSQL Audit
+                            │
+                            ▼
+                    Analytics / Views
 ```
+
 
 ---
 
@@ -249,55 +225,7 @@ The probability threshold can be adjusted according to the desired precision/rec
 
 ---
 
-# 🔄 Streaming Workflow
-
-A transaction follows this lifecycle:
-
-```text
-CSV Transaction
-      │
-      ▼
-Kafka Producer
-      │
-      ▼
-transactions-stream
-      │
-      ▼
-FastAPI Consumer
-      │
-      ▼
-Feature Scaling
-      │
-      ▼
-Rolling Window
-(T = 10)
-      │
-      ▼
-LSTM Autoencoder
-      │
-      ├─────────────── Normal ──────────────► Audit / Pass
-      │
-      ▼
-    Anomaly
-      │
-      ▼
-XGBoost Fraud Classifier
-      │
-      ├──────────── Low Risk ───────────────► Audit Log
-      │
-      ▼
-   High Risk
-      │
-      ▼
- Alert / Block
-      │
-      ▼
-PostgreSQL
-```
-
----
-
-# 🛠️ Technology Stack
+# Technology Stack
 
 | Technology | Purpose |
 |---|---|
@@ -356,7 +284,7 @@ PostgreSQL
 
 ---
 
-# ⚙️ Quickstart
+# Quickstart
 
 ## Prerequisites
 
@@ -558,7 +486,7 @@ cd ..
 
 ---
 
-# 🗄️ Database Layer
+# Database Layer
 
 PostgreSQL stores transaction events and model decisions for auditing and analysis.
 
@@ -585,7 +513,7 @@ Defines SQLAlchemy ORM models representing persisted transaction and inference r
 
 ---
 
-# 📈 Analytical SQL
+# Analytical SQL
 
 The database layer supports analytical processing through PostgreSQL views and temporal aggregations.
 
@@ -608,7 +536,7 @@ FROM view_hourly_anomaly_metrics;
 
 ---
 
-# 🔌 Kafka Streaming
+# Kafka Streaming
 
 Kafka acts as the central event-streaming layer.
 
@@ -637,7 +565,7 @@ This decouples transaction generation from model inference and allows the consum
 
 ---
 
-# 📦 Producer Service
+# Producer Service
 
 The producer implements a CSV replay engine.
 
@@ -662,7 +590,7 @@ producer/Dockerfile
 
 ---
 
-# 🚦 Consumer Service
+# Consumer Service
 
 The consumer is implemented using **FastAPI**.
 
@@ -698,7 +626,7 @@ Responsible for:
 
 ---
 
-# 🔬 ONNX Inference
+# ONNX Inference
 
 The production consumer does not need the original training frameworks for inference.
 
@@ -730,7 +658,7 @@ This creates a lightweight inference environment suitable for containerized stre
 
 ---
 
-# 🧮 Rolling Sequence State
+# Rolling Sequence State
 
 The Stage 1 Autoencoder operates on a sliding sequence of:
 
@@ -771,7 +699,7 @@ This allows the model to capture temporal behavior instead of treating every tra
 
 ---
 
-# 🛡️ Fraud Decision Logic
+# Fraud Decision Logic
 
 The complete decision tree is:
 
@@ -814,7 +742,7 @@ The complete decision tree is:
 
 ---
 
-# 🔐 Configuration
+# Configuration
 
 The application requires configuration for services such as:
 
@@ -846,7 +774,7 @@ Never commit database passwords, API credentials, private keys, or other secrets
 
 ---
 
-# 🐳 Docker Architecture
+# Docker Architecture
 
 The application is designed as a multi-container system:
 
@@ -876,7 +804,7 @@ This structure isolates the stream producer, message broker, inference service, 
 
 ---
 
-# 📊 Monitoring & Observability
+# Monitoring & Observability
 
 The architecture provides several points for monitoring:
 
@@ -924,7 +852,7 @@ This project demonstrates several production-oriented machine-learning engineeri
 
 ---
 
-# 🚀 Future Improvements
+# Future Improvements
 
 Potential extensions include:
 
@@ -953,67 +881,9 @@ See the `LICENSE` file for more information.
 
 ---
 
-# 📋 Resume Bullet Points
-
-- **Engineered a hybrid real-time fraud pipeline** using **Apache Kafka**, an **LSTM Autoencoder** for unsupervised anomaly detection, an **XGBoost** classifier for supervised fraud scoring, and **PostgreSQL** for transactional auditing.
-
-- **Optimized streaming inference** by exporting PyTorch and XGBoost models to **ONNX Runtime**, targeting sub-20 ms end-to-end inference latency for real-time transaction processing.
-
-- **Designed a two-stage anomaly triage architecture** in which the LSTM Autoencoder filters normal transaction sequences using reconstruction loss, reducing Stage 2 classifier invocations by approximately **97%** under the target traffic distribution.
-
-- **Implemented temporal transaction analytics** using PostgreSQL window functions and aggregations to calculate rolling velocity metrics, anomaly statistics, and model-monitoring indicators.
-
-- **Containerized the complete ML streaming stack** with **Docker Compose**, integrating Kafka, FastAPI, PostgreSQL, ONNX Runtime, asynchronous database persistence, service health checks, and automated pytest integration tests.
-
----
-
-# ⭐ Project Summary
+# Project Summary
 
 The project implements an end-to-end real-time fraud detection architecture:
-
-```text
-                    DATA
-                     │
-                     ▼
-              Kafka Streaming
-                     │
-                     ▼
-            Feature Processing
-                     │
-                     ▼
-           Rolling Time Window
-                  T = 10
-                     │
-                     ▼
-        ┌────────────────────────┐
-        │ Stage 1: LSTM AE       │
-        │ Unsupervised Anomaly   │
-        │ Detection              │
-        └───────────┬────────────┘
-                    │
-              ┌─────┴─────┐
-              │           │
-           Normal       Anomaly
-              │           │
-              │           ▼
-              │      ┌─────────────┐
-              │      │ Stage 2     │
-              │      │ XGBoost     │
-              │      │ Fraud Score │
-              │      └──────┬──────┘
-              │             │
-              │       ┌─────┴─────┐
-              │       │           │
-              │    Low Risk    High Risk
-              │       │           │
-              └───────┴─────┬─────┘
-                            │
-                            ▼
-                    PostgreSQL Audit
-                            │
-                            ▼
-                    Analytics / Views
-```
 
 **Kafka → FastAPI → LSTM Autoencoder → XGBoost → PostgreSQL**
 
