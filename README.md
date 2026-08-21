@@ -1,4 +1,4 @@
-# PayWatch : Real-time transaction anomaly & fraud detection pipeline
+# PayWatch : Multi-stage transaction anomaly detection
 
 A real-time, two-stage streaming pipeline for **time-series anomaly detection and fraud classification**.
 
@@ -55,7 +55,7 @@ The system combines an unsupervised **LSTM Autoencoder** with a supervised **XGB
 
 ---
 
-## 💡 Key Design Decisions
+## Key Design Decisions
 
 ### Two-Stage Hybrid Architecture
 
@@ -127,7 +127,7 @@ This keeps database persistence from unnecessarily blocking the streaming infere
 
 ---
 
-# 🚀 Performance Benchmarks
+# Performance Benchmarks
 
 | Metric | Target / Result |
 |---|---:|
@@ -142,7 +142,7 @@ The Stage 2 XGBoost model uses `scale_pos_weight` optimization to account for th
 
 ---
 
-# 🧠 Machine Learning Pipeline
+# Two-Stage ML Pipeline
 
 ## Stage 1 — LSTM Autoencoder
 
@@ -461,7 +461,7 @@ This allows streaming results and anomaly statistics to be inspected directly fr
 
 ---
 
-# 🧪 Running Tests
+# Running Tests
 
 The project includes unit and integration tests using **pytest**.
 
