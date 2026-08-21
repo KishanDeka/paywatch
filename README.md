@@ -582,8 +582,8 @@ creditcard.csv
 ## 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/time-series-anomaly-pipeline.git
-cd time-series-anomaly-pipeline
+git clone https://github.com/KishanDeka/paywatch.git
+cd paywatch
 ```
 
 Create the data directory:
