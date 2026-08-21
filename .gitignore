@@ -1,0 +1,5 @@
+venv/
+.venv/
+env/
+*/__pycahe__/
+*/*/*.pyc
