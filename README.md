@@ -1,5 +1,14 @@
 # PayWatch : Multi-stage transaction anomaly detection
 
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.2%2B-red.svg)](https://pytorch.org/)
+[![Apache Kafka](https://img.shields.io/badge/Apache_Kafka-7.5%2B-black.svg?logo=apachekafka)](https://kafka.apache.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688.svg?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![ONNX Runtime](https://img.shields.io/badge/ONNX_Runtime-1.17%2B-blue.svg)](https://onnxruntime.ai/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16%2B-336791.svg?logo=postgresql)](https://www.postgresql.org/)
+[![Docker](https://img.shields.io/badge/Docker-Enabled-2496ED.svg?logo=docker)](https://www.docker.com/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 A real-time, two-stage streaming pipeline for **time-series anomaly detection and fraud classification**.
 
 The system combines an unsupervised **LSTM Autoencoder** with a supervised **XGBoost** classifier and serves inference through **ONNX Runtime** within a **FastAPI + Apache Kafka** streaming architecture. Transactional events and model decisions are persisted asynchronously in **PostgreSQL** using **SQLAlchemy 2.0** and **asyncpg**.
