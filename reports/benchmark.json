@@ -1,0 +1,17 @@
+{
+  "scope": "local serial scoring only; excludes Kafka, HTTP, database and queueing",
+  "model_version": "07025eb28832d042",
+  "dataset_kind": "synthetic",
+  "events": 800,
+  "mean_ms": 0.27284834124913004,
+  "p50_ms": 0.23602900000696536,
+  "p95_ms": 0.4764580000255584,
+  "p99_ms": 0.9902993600326225,
+  "serial_events_per_second": 3665.039689894719,
+  "stage2_fraction": 0.13625,
+  "xgboost_session_only_mean_ms": 0.007336423750246013,
+  "python": "3.12.13",
+  "platform": "Linux-6.18.35-x86_64-with-glibc2.39",
+  "cpu": "x86_64",
+  "onnx_threads": 1
+}

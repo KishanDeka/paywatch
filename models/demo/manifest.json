@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "model_version": "07025eb28832d042",
+  "features": [
+    "V1",
+    "V2",
+    "V3",
+    "V4",
+    "V5",
+    "V6",
+    "V7",
+    "V8",
+    "V9",
+    "V10",
+    "V11",
+    "V12",
+    "V13",
+    "V14",
+    "V15",
+    "V16",
+    "V17",
+    "V18",
+    "V19",
+    "V20",
+    "V21",
+    "V22",
+    "V23",
+    "V24",
+    "V25",
+    "V26",
+    "V27",
+    "V28",
+    "log_amount",
+    "log_gap"
+  ],
+  "sequence_length": 10,
+  "hidden": 24,
+  "policy": {
+    "gate_threshold": 1.2812724113464355,
+    "fraud_threshold": 0.041410814970731735,
+    "sentinel_fraction": 0.05,
+    "coefficient": 1.2758676494250991,
+    "intercept": -1.7912339631221532
+  },
+  "sha256": {
+    "autoencoder.onnx": "6773a6967ef58d87bd4ed01bfb39d765d267eabc57e6f968c59fd619669aa988",
+    "xgboost.onnx": "4e77c5d448b8fac956ad22d4459071d43c89c5c57b0fd7565bbcae7ad96f006d",
+    "scaler.npz": "a82a228a5a3853625066b100552415787b623f68996f98de8ec92101bda37b96"
+  },
+  "configuration": {
+    "dataset_kind": "synthetic",
+    "epochs": 8,
+    "hidden": 24,
+    "sequence_length": 10,
+    "seed": 42,
+    "gate_recall": 0.98,
+    "sentinel_fraction": 0.05,
+    "review_cost": 2.0,
+    "loss_fraction": 1.0
+  },
+  "data_sha256": "8c94d1b0681d0d1a6dafe63645e30a3e5d84a15b643159be97ddddb602330601",
+  "dataset_kind": "synthetic",
+  "splits": {
+    "train": {
+      "rows": 2400,
+      "frauds": 60,
+      "start": 0.0,
+      "end": 4885.0
+    },
+    "calibration": {
+      "rows": 400,
+      "frauds": 10,
+      "start": 4889.0,
+      "end": 5712.0
+    },
+    "policy": {
+      "rows": 400,
+      "frauds": 10,
+      "start": 5715.0,
+      "end": 6513.0
+    },
+    "test": {
+      "rows": 800,
+      "frauds": 20,
+      "start": 6514.0,
+      "end": 8126.0
+    }
+  },
+  "versions": {
+    "torch": "2.5.1+cpu",
+    "numpy": "1.26.4",
+    "scikit-learn": "1.6.1",
+    "xgboost": "2.1.4",
+    "onnx": "1.17.0",
+    "onnxruntime": "1.20.1",
+    "onnxmltools": "1.13.0"
+  }
+}

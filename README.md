@@ -1,905 +1,221 @@
-# PayWatch : Multi-stage transaction anomaly detection
+# PayWatch — recall-aware transaction triage
 
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.2%2B-red.svg)](https://pytorch.org/)
-[![Apache Kafka](https://img.shields.io/badge/Apache_Kafka-7.5%2B-black.svg?logo=apachekafka)](https://kafka.apache.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688.svg?logo=fastapi)](https://fastapi.tiangolo.com/)
-[![ONNX Runtime](https://img.shields.io/badge/ONNX_Runtime-1.17%2B-blue.svg)](https://onnxruntime.ai/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16%2B-336791.svg?logo=postgresql)](https://www.postgresql.org/)
-[![Docker](https://img.shields.io/badge/Docker-Enabled-2496ED.svg?logo=docker)](https://www.docker.com/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+A portfolio project by Kishan Deka: a hand-built LSTM autoencoder, calibrated XGBoost,
+and a durable Kafka → FastAPI → PostgreSQL inference workflow.
 
-A real-time, two-stage streaming pipeline for **time-series anomaly detection and fraud classification**.
+The interesting question is **whether an anomaly gate saves enough classifier work to justify
+its missed fraud and latency**. PayWatch measures that trade-off instead of assuming that a
+more complicated pipeline is better. Its scientific emphasis is uncertainty, controlled
+comparisons, reproducibility, and diagnosing failure modes.
 
-The system combines an unsupervised **LSTM Autoencoder** with a supervised **XGBoost** classifier and serves inference through **ONNX Runtime** within a **FastAPI + Apache Kafka** streaming architecture. Transactional events and model decisions are persisted asynchronously in **PostgreSQL** using **SQLAlchemy 2.0** and **asyncpg**.
+**Status:** implemented and locally tested with synthetic data. Both ONNX exports were verified.
+Real credit-card metrics and full Docker/Kafka/PostgreSQL integration are not yet measured.
+See [validation evidence](reports/VALIDATION.md). The original README's 14.2 ms, 250 TPS,
+0.89 ROC-AUC, 0.86 PR-AUC, and 97% filtering claims are not treated as measured results.
 
----
+## What makes this project different
 
-## System Architecture
+- An LSTM cell implemented with explicit input, forget, candidate, and output gates; no
+  `nn.LSTM` or `nn.LSTMCell` in the model. Forward and backward results are checked against
+  a reference cell, including a numerical gradient check.
+- A gate selected on a chronological policy partition to meet a requested empirical fraud
+  recall. A deterministic 5% sample of otherwise bypassed events also gets classified.
+- A business-cost decision threshold, probability calibration, amount-weighted missed fraud,
+  and block-bootstrap recall intervals. Business costs are explicit assumptions.
+- Atomic decision, window-state, and offset auditing in PostgreSQL; event IDs make retries
+  idempotent. A failed database write never produces a successful durable acknowledgment.
+- A baseline-first evaluation: calibrated XGBoost alone and logistic regression are included.
+  A release-check script rejects synthetic evidence and insufficient real-data performance.
+
+## Workflow
+
+```mermaid
+flowchart TD
+  A[Chronological replay] --> B[Kafka: one ordered partition]
+  B --> C[Schema and ordering checks]
+  C -->|Invalid| Q[Durable quarantine]
+  C --> D[Shared feature transform]
+  D --> E[Rolling LSTM reconstruction]
+  E -->|Warmup, anomaly, or sentinel sample| F[Calibrated XGBoost]
+  E -->|Below gate| G[Pass with unscored probability]
+  F --> H[Review or pass]
+  G --> I[Atomic audit and window checkpoint]
+  H --> I
+  Q --> J[Commit Kafka offset]
+  I --> J
+```
+
+`review` is a recorded recommendation. No transaction is actually blocked and no alert is
+sent externally. An unscored transaction has `fraud_probability=null`, never a fabricated zero.
+The HTTP endpoint uses an independent demo stream so HTTP requests cannot change Kafka windows.
+
+## Data and scope
+
+Use the [ULB/Kaggle Credit Card Fraud Detection dataset](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud):
+`Time`, `Amount`, `V1`–`V28`, and `Class`. Download it manually into `data/creditcard.csv`.
+No real dataset is redistributed here. The included demo is generated synthetic data.
+
+The data has no card/customer ID. A window of ten rows therefore describes a **global arrival
+stream**, not one customer's spending sequence. The project enforces a single Kafka partition.
+Do not claim per-customer velocity, user behavior modeling, or demonstrated zero-day detection.
+See [design choices](docs/DESIGN.md) before interpreting the LSTM.
+
+## Repository guide
 
 ```text
-                    DATA
-                     │
-                     ▼
-              Kafka Streaming
-                     │
-                     ▼
-            Feature Processing
-                     │
-                     ▼
-           Rolling Time Window
-                  T = 10
-                     │
-                     ▼
-        ┌────────────────────────┐
-        │ Stage 1: LSTM AE       │
-        │ Unsupervised Anomaly   │
-        │ Detection              │
-        └───────────┬────────────┘
-                    │
-              ┌─────┴─────┐
-              │           │
-           Normal       Anomaly
-              │           │
-              │           ▼
-              │      ┌─────────────┐
-              │      │ Stage 2     │
-              │      │ XGBoost     │
-              │      │ Fraud Score │
-              │      └──────┬──────┘
-              │             │
-              │       ┌─────┴─────┐
-              │       │           │
-              │    Low Risk    High Risk
-              │       │           │
-              └───────┴─────┬─────┘
-                            │
-                            ▼
-                    PostgreSQL Audit
-                            │
-                            ▼
-                    Analytics / Views
+paywatch/
+├── src/paywatch/
+│   ├── lstm.py           # Explicit recurrent cell and autoencoder
+│   ├── train.py          # Train, calibrate, choose policy, export, evaluate
+│   ├── data.py           # CSV contract, time splits, replay adapter
+│   ├── features.py       # Same transformation in training and serving
+│   ├── policy.py         # Gate, sentinel sample, calibration, cost threshold
+│   ├── evaluation.py     # Metrics, uncertainty, drift calculations
+│   ├── inference.py      # ONNX scoring without training frameworks
+│   ├── database.py       # Transactional state and audit persistence
+│   ├── worker.py         # Kafka validation, processing, manual commits
+│   ├── api.py            # FastAPI lifecycle, HTTP scoring, health, metrics
+│   ├── replay.py         # Rate-controlled CSV producer
+│   └── schema.py         # Strict event schema
+├── training/train.py     # Convenient training entry point
+├── producer/producer.py  # Convenient producer entry point
+├── consumer/main.py      # Convenient ASGI entry point
+├── db/init.sql           # Tables and analytical views
+├── scripts/              # Demo, plots, benchmark, release check, stack test
+├── tests/                # Model, pipeline, export, API, database tests
+├── docs/                 # Decisions, model card, runbook, improvements
+├── data/                 # Local CSV files; ignored by Git
+├── models/               # Versioned training outputs; ignored by Git
+├── reports/              # Measured evidence and figures
+├── .github/workflows/ci.yml
+├── pyproject.toml
+├── Dockerfile
+└── docker-compose.yml
 ```
 
+All reusable logic is in one importable package. The three entry-point folders contain no
+duplicated model or feature logic. One Docker image supports both consumer and producer.
 
----
+## Quick start: no accounts or cloud required
 
-## Key Design Decisions
-
-### Two-Stage Hybrid Architecture
-
-The pipeline separates anomaly detection from fraud classification.
-
-**Stage 1** processes **100% of incoming transactions** using an LSTM Autoencoder. It acts as a high-throughput anomaly filter and identifies sequences whose behavior deviates from normal transaction patterns.
-
-Only transactions flagged as anomalous proceed to **Stage 2**, where the XGBoost classifier performs supervised fraud scoring.
-
-This reduces unnecessary classifier execution and helps limit alert fatigue.
-
-> In the intended workload, approximately **1–3% of traffic** is expected to reach Stage 2.
-
-### ONNX Runtime Inference
-
-Both models are exported to **ONNX**:
-
-- PyTorch LSTM Autoencoder → ONNX
-- XGBoost classifier → ONNX
-
-The consumer uses **ONNX Runtime** for production inference, reducing framework overhead and providing a lightweight runtime for the streaming service.
-
-The target architecture achieves **sub-20 ms average end-to-end inference latency** per message.
-
-### Zero-Day Anomaly Detection
-
-The LSTM Autoencoder is trained exclusively on normal transactions:
-
-```text
-Class == 0
-```
-
-Instead of learning fraud labels directly, the model learns to reconstruct normal transaction sequences.
-
-For an incoming sequence:
-
-```text
-Input Sequence
-      │
-      ▼
-LSTM Encoder
-      │
-      ▼
-Latent Representation
-      │
-      ▼
-LSTM Decoder
-      │
-      ▼
-Reconstructed Sequence
-      │
-      ▼
-MSE Reconstruction Loss
-```
-
-A reconstruction loss above the configured threshold indicates that the sequence differs substantially from the normal training distribution.
-
-This provides an additional mechanism for detecting previously unseen or novel attack patterns.
-
-### Asynchronous Persistence
-
-Database writes are performed asynchronously using:
-
-- **SQLAlchemy 2.0**
-- **asyncpg**
-- FastAPI background processing
-
-This keeps database persistence from unnecessarily blocking the streaming inference path.
-
----
-
-# Performance Benchmarks
-
-| Metric | Target / Result |
-|---|---:|
-| **Pipeline Throughput** | 250+ transactions/second |
-| **Average End-to-End Latency (p95)** | 14.2 ms |
-| **Stage 1 Model** | PyTorch LSTM Autoencoder, T=10 |
-| **Stage 2 Model** | XGBoost Classifier |
-| **Stage 1 Anomaly Performance** | ROC-AUC: 0.89 |
-| **Stage 2 Fraud Detection** | PR-AUC: 0.86 |
-
-The Stage 2 XGBoost model uses `scale_pos_weight` optimization to account for the strong class imbalance typically present in fraud-detection datasets.
-
----
-
-# End-to-end pipeline
-
-## Kafka Streaming
-
-Kafka acts as the central event-streaming layer.
-
-The primary topic is:
-
-```text
-transactions-stream
-```
-
-The producer publishes transaction records to Kafka, while the FastAPI consumer subscribes to the stream.
-
-```text
-Producer
-   │
-   ▼
-Kafka Broker
-   │
-   ▼
-transactions-stream
-   │
-   ▼
-Consumer
-```
-
-This decouples transaction generation from model inference and allows the consumer service to process events independently.
-
----
-
-## Producer Service
-
-The producer implements a CSV replay engine.
-
-Location:
-
-```text
-producer/producer.py
-```
-
-Its responsibilities include:
-
-1. Reading transactions from the dataset.
-2. Converting records into streaming events.
-3. Publishing events to Kafka.
-4. Simulating a real-time transaction stream.
-
-The producer is containerized using:
-
-```text
-producer/Dockerfile
-```
-
----
-
-
-## Two-Stage ML Pipeline
-
-### Stage 1 — LSTM Autoencoder
-
-The first model performs unsupervised anomaly detection.
-
-#### Training
-
-The Autoencoder is trained only on normal transactions:
-
-```text
-Credit Card Transactions
-          │
-          ├── Class 0 ──► LSTM Autoencoder Training
-          │
-          └── Fraud ────► Excluded from Autoencoder Training
-```
-
-The model receives sequences of length:
-
-```text
-T = 10
-```
-
-It learns to reconstruct normal transaction sequences.
-
-#### Inference
-
-For each rolling sequence:
-
-```text
-Reconstruction Loss = MSE(Input, Reconstruction)
-```
-
-Decision:
-
-```text
-Loss <= Threshold
-        │
-        ▼
-      Normal
-```
-
-or:
-
-```text
-Loss > Threshold
-        │
-        ▼
-     Anomaly
-        │
-        ▼
-   Stage 2 XGBoost
-```
-
----
-
-### Stage 2 — XGBoost Fraud Classifier
-
-Only transactions identified as anomalous by Stage 1 are passed to the supervised classifier.
-
-The XGBoost model produces a fraud probability.
-
-```text
-P(Fraud) < 0.5
-       │
-       ▼
-   Low Risk
-   Audit Log
-```
-
-```text
-P(Fraud) >= 0.5
-       │
-       ▼
-   High Risk
- Alert & Block
-```
-
-The probability threshold can be adjusted according to the desired precision/recall trade-off.
-
----
-
-### Rolling Sequence State
-
-The Stage 1 Autoencoder operates on a sliding sequence of:
-
-```text
-T = 10
-```
-
-transactions.
-
-The consumer maintains a rolling buffer:
-
-```text
-Transaction 1
-Transaction 2
-Transaction 3
-...
-Transaction 10
-        │
-        ▼
-  LSTM Autoencoder
-```
-
-When a new transaction arrives, the window advances:
-
-```text
-Before:
-
-[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-
-New transaction: 11
-
-After:
-
-[2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-```
-
-This allows the model to capture temporal behavior instead of treating every transaction as an independent observation.
-
----
-
-## Fraud Decision Logic
-
-The complete decision tree is:
-
-```text
-                    Transaction
-                         │
-                         ▼
-                 StandardScaler
-                         │
-                         ▼
-                 Rolling Window
-                      T = 10
-                         │
-                         ▼
-                LSTM Autoencoder
-                         │
-                  Reconstruction
-                       Loss
-                         │
-               ┌─────────┴─────────┐
-               │                   │
-          Loss <= T            Loss > T
-               │                   │
-               ▼                   ▼
-            Normal             Anomaly
-               │                   │
-               │                   ▼
-               │              XGBoost
-               │                   │
-               │              Fraud Prob.
-               │                   │
-               │          ┌────────┴────────┐
-               │          │                 │
-               │       < 0.5              >= 0.5
-               │          │                 │
-               ▼          ▼                 ▼
-             Pass     Low Risk         High Risk
-                      Audit Log       Alert & Block
-```
-
----
-
-## Consumer Service
-
-The consumer is implemented using **FastAPI**.
-
-Location:
-
-```text
-consumer/
-├── main.py
-└── inference.py
-```
-
-### `main.py`
-
-Responsible for:
-
-- FastAPI application setup.
-- Kafka consumption.
-- Stream processing.
-- Health endpoint.
-- Background persistence.
-
-### `inference.py`
-
-Responsible for:
-
-- Feature preprocessing.
-- Rolling-window management.
-- ONNX Runtime sessions.
-- LSTM Autoencoder inference.
-- Reconstruction-loss calculation.
-- XGBoost inference.
-- Risk classification.
-
----
-
-## ONNX Inference
-
-The production consumer does not need the original training frameworks for inference.
-
-Instead, trained models are exported to ONNX:
-
-```text
-PyTorch LSTM Autoencoder
-          │
-          ▼
-       ONNX
-          │
-          ▼
- ONNX Runtime Consumer
-```
-
-and:
-
-```text
-XGBoost Classifier
-          │
-          ▼
-       ONNX
-          │
-          ▼
- ONNX Runtime Consumer
-```
-
-This creates a lightweight inference environment suitable for containerized streaming workloads.
-
----
-
-
-## Database Layer
-
-PostgreSQL stores transaction events and model decisions for auditing and analysis.
-
-The database layer is organized as:
-
-```text
-db/
-├── init.sql
-├── database.py
-└── models.py
-```
-
-### `init.sql`
-
-Responsible for database initialization, schema setup, and analytical SQL views.
-
-### `database.py`
-
-Contains the database engine and asynchronous connection configuration.
-
-### `models.py`
-
-Defines SQLAlchemy ORM models representing persisted transaction and inference records.
-
----
-
-## Analytical SQL
-
-The database layer supports analytical processing through PostgreSQL views and temporal aggregations.
-
-Potential analytical workloads include:
-
-- Hourly anomaly counts.
-- Fraud detection rates.
-- Transaction velocity.
-- Rolling transaction metrics.
-- Model prediction distributions.
-- Temporal anomaly trends.
-- Model drift monitoring.
-
-Example:
-
-```sql
-SELECT *
-FROM view_hourly_anomaly_metrics;
-```
-
----
-
-
-# Technology Stack
-
-| Technology | Purpose |
-|---|---|
-| **Python 3.10+** | Application and ML development |
-| **PyTorch** | LSTM Autoencoder training |
-| **XGBoost** | Supervised fraud classification |
-| **ONNX** | Model interchange and deployment format |
-| **ONNX Runtime** | Production model inference |
-| **Apache Kafka** | Real-time transaction streaming |
-| **FastAPI** | Consumer service and inference API |
-| **PostgreSQL** | Transaction and prediction persistence |
-| **SQLAlchemy 2.0** | Async database access / ORM |
-| **asyncpg** | PostgreSQL asynchronous driver |
-| **Docker** | Containerization |
-| **Docker Compose** | Multi-service orchestration |
-| **Pytest** | Unit and integration testing |
-| **Pandas / NumPy** | Data processing |
-
----
-
-# 📂 Repository Layout
-
-```text
-.
-├── docker-compose.yml          # Multi-container orchestration
-│
-├── data/
-│   └── creditcard.csv          # Kaggle Credit Card Fraud dataset
-│
-├── models/
-│   ├── autoencoder.onnx        # Exported LSTM Autoencoder
-│   ├── xgboost.onnx            # Exported XGBoost model
-│   └── scaler.*                # Feature-scaling artifacts
-│
-├── db/
-│   ├── init.sql                # PostgreSQL initialization
-│   ├── database.py             # Database configuration
-│   └── models.py               # SQLAlchemy models
-│
-├── training/
-│   ├── train_autoencoder.py    # LSTM Autoencoder training/export
-│   └── train_xgboost.py        # XGBoost training/export
-│
-├── producer/
-│   ├── Dockerfile              # Producer container
-│   └── producer.py             # Kafka replay producer
-│
-├── consumer/
-│   ├── Dockerfile              # Consumer container
-│   ├── main.py                 # FastAPI/Kafka consumer
-│   └── inference.py            # ONNX inference engine
-│
-└── tests/
-    └── ...                      # Pytest unit/integration suite
-```
-
----
-
-# Quickstart
-
-## 0. Prerequisites
-
-Install or obtain:
-
-- Docker Desktop
-- Python 3.10+
-- Kaggle Credit Card Fraud Detection dataset
-- Git
-
-Dataset:
-
-**Credit Card Fraud Detection Dataset**
-
-https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud
-
-The expected file is:
-
-```text
-creditcard.csv
-```
-
----
-
-## 1. Clone the Repository
+Use Python 3.11 or 3.12. Tested locally on Python 3.12/Linux CPU. From the repository root:
 
 ```bash
-git clone https://github.com/KishanDeka/paywatch.git
-cd paywatch
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+python -m pip install -e '.[train,dev]'
+python scripts/make_demo_data.py
+python -m paywatch.train --data data/demo.csv --output models/my-demo --dataset-kind synthetic --epochs 8
+PAYWATCH_TEST_MODELS=models/my-demo python -m pytest -q -m 'not integration'
+python scripts/plot_results.py --models models/my-demo
+python scripts/benchmark.py --models models/my-demo
 ```
 
-Create the data directory:
+On Windows activate `.venv\Scripts\activate`; use the appropriate PyTorch installation for your
+platform. Set environment variables with your shell's syntax. Run commands from the root,
+not from `training/`. Each training output must be a new or empty directory.
+
+The delivered archive includes `models/demo/`, `data/demo.csv`, and evidence from a completed
+synthetic run. These are conveniences for review, not real-data results. They are ignored when
+you initialize Git. `make demo` is intended for a fresh checkout without those generated files;
+use the new-directory command above when working from this archive.
+
+## Train on the real dataset
 
 ```bash
-mkdir -p data
+python -m paywatch.train --data data/creditcard.csv --output models/run-001 --dataset-kind creditcard --epochs 30
+python scripts/plot_results.py --models models/run-001 --output reports/real-run-001
+python scripts/benchmark.py --models models/run-001 --data data/creditcard.csv --output reports/real-run-001/benchmark.json
+python scripts/check_release.py models/run-001/evaluation.json
 ```
 
-Place the downloaded dataset inside it:
+Splits are chronological: 60% training, 10% calibration/early stopping, 10% policy selection,
+20% final test. Timestamp ties stay together. Each split needs both classes; short or invalid
+splits fail explicitly. Scaler statistics come only from training. Windows reset at every
+boundary, so none straddles a partition. The classifier sees all training rows; the autoencoder
+sees only originally contiguous windows containing no labeled fraud.
 
-```text
-data/
-└── creditcard.csv
-```
+The gate aims for 98% empirical recall on the policy split, with no promise that only 1–3% of
+traffic gets scored. Read `evaluation.json` to see what the data supports. The default illustrative
+cost is 2 currency units per review plus the full amount of any missed fraud. Adjust
+`--review-cost` and `--loss-fraction` before evaluating a deployment decision.
 
-For example:
+## Start the streaming stack
+
+Requires Docker Compose v2. Images are version-pinned, with Kafka in KRaft mode (no ZooKeeper).
 
 ```bash
-cp /path/to/downloaded/creditcard.csv data/
+cp .env.example .env
+# Edit .env: choose an alphanumeric local password and MODEL_DIR=./models/demo
+# Use MODEL_DIR=./models/run-001 for a real-data model.
+docker compose up --build --wait
+curl http://localhost:8000/health/ready
+docker compose --profile replay run --rm producer
 ```
 
----
-
-## 2. Train the Models
-
-The machine-learning models are trained offline before the streaming stack is launched.
-
-Navigate to the training directory:
+For real data:
 
 ```bash
-cd training
+docker compose --profile replay run --rm producer --data /app/data/creditcard.csv --bootstrap kafka:29092 --split test
 ```
 
-Install the training dependencies:
+Producer replay defaults to the held-out test partition, preserves sorted order, sends no label,
+and derives stable event IDs from dataset hash plus original row number. Replaying the same file
+has no duplicate database effect. A different model or unrelated dataset should use a fresh
+stream/database environment; do not append old timestamps to a used stream.
+
+API docs: `http://localhost:8000/docs`. A durable HTTP example:
 
 ```bash
-pip install -r requirements.txt
+python - <<'PYTHON'
+import httpx
+payload = {"event_id": "manual-001", "time": 1, "amount": 12.5, "v": [0.0] * 28}
+r = httpx.post("http://localhost:8000/score", json=payload)
+r.raise_for_status()
+print(r.json())
+PYTHON
 ```
 
-Train the LSTM Autoencoder:
+Inspect SQL metrics:
 
 ```bash
-python train_autoencoder.py
+docker compose exec postgres psql -U paywatch -d paywatch -c 'SELECT * FROM view_hourly_anomaly_metrics;'
+docker compose exec postgres psql -U paywatch -d paywatch -c 'SELECT * FROM view_stream_velocity LIMIT 10;'
 ```
 
-Train the XGBoost classifier:
+`/health/live` checks process availability. `/health/ready` checks the database, loaded models,
+and worker status. `/metrics` exposes Prometheus counters and processing-latency histograms.
+See [operations and failure handling](docs/RUNBOOK.md).
+
+## Tests and evidence
 
 ```bash
-python train_xgboost.py
+python -m ruff check .
+python -m pytest -q
+# Against an explicitly disposable PostgreSQL database:
+PAYWATCH_TEST_DATABASE_URL=postgresql+asyncpg://paywatch:YOUR_PASSWORD@localhost:5432/paywatch python -m pytest -q -m integration
 ```
 
-Return to the project root:
-
-```bash
-cd ..
-```
-
-The resulting model and preprocessing artifacts should be stored under:
-
-```text
-models/
-```
-
-Expected artifacts may include:
-
-```text
-models/
-├── autoencoder.onnx
-├── xgboost.onnx
-└── scaler.*
-```
-
----
-
-## 3. Launch the Microservice Stack
-
-The project uses Docker Compose to orchestrate the complete streaming environment.
-
-Start the services with:
-
-```bash
-docker-compose up --build
-```
-
-The stack includes:
-
-- ZooKeeper
-- Apache Kafka
-- PostgreSQL
-- FastAPI consumer
-- Kafka stream replay producer
-
-To run the stack in detached mode:
-
-```bash
-docker-compose up --build -d
-```
-
-To inspect running containers:
-
-```bash
-docker-compose ps
-```
-
-To view logs:
-
-```bash
-docker-compose logs -f
-```
-
----
-
-## 4. Verify the API
-
-FastAPI exposes an interactive API documentation page:
-
-```text
-http://localhost:8000/docs
-```
-
-Health endpoint:
-
-```bash
-curl http://localhost:8000/health
-```
-
-A healthy service should return a successful health response.
-
----
-
-## 5. Inspect PostgreSQL Metrics
-
-The project includes PostgreSQL views for analytical queries.
-
-For example:
-
-```bash
-docker exec -it postgres \
-  psql -U admin \
-  -d streaming_db \
-  -c "SELECT * FROM view_hourly_anomaly_metrics;"
-```
-
-This allows streaming results and anomaly statistics to be inspected directly from PostgreSQL.
-
----
-
-# Running Tests
-
-The project includes unit and integration tests using **pytest**.
-
-Install the test dependencies:
-
-```bash
-cd tests
-pip install -r requirements-test.txt
-```
-
-Run the complete test suite:
-
-```bash
-pytest -v
-```
-
-Return to the project root:
-
-```bash
-cd ..
-```
-
----
-
-
-# Configuration
-
-The application requires configuration for services such as:
-
-- Kafka.
-- PostgreSQL.
-- Model artifact locations.
-- Autoencoder anomaly threshold.
-- Fraud probability threshold.
-
-Where appropriate, these values should be supplied through environment variables rather than hard-coded credentials.
-
-Example configuration pattern:
-
-```text
-KAFKA_BOOTSTRAP_SERVERS=...
-KAFKA_TOPIC=transactions-stream
-
-POSTGRES_HOST=...
-POSTGRES_PORT=5432
-POSTGRES_DB=streaming_db
-POSTGRES_USER=...
-POSTGRES_PASSWORD=...
-
-ANOMALY_THRESHOLD=...
-FRAUD_THRESHOLD=0.5
-```
-
-Never commit database passwords, API credentials, private keys, or other secrets to the repository.
-
----
-
-# Docker Architecture
-
-The application is designed as a multi-container system:
-
-```text
-┌───────────────────────────────────────────────────────┐
-│                  Docker Compose Stack                 │
-│                                                       │
-│  ┌──────────────┐      ┌──────────────────────────┐  │
-│  │   Producer   │─────►│      Kafka Broker        │  │
-│  └──────────────┘      └────────────┬─────────────┘  │
-│                                     │                │
-│                                     ▼                │
-│                         ┌──────────────────────────┐  │
-│                         │    FastAPI Consumer      │  │
-│                         │    ONNX Runtime          │  │
-│                         └────────────┬─────────────┘  │
-│                                      │                │
-│                                      ▼                │
-│                         ┌──────────────────────────┐  │
-│                         │       PostgreSQL         │  │
-│                         └──────────────────────────┘  │
-│                                                       │
-└───────────────────────────────────────────────────────┘
-```
-
-This structure isolates the stream producer, message broker, inference service, and persistence layer.
-
----
-
-# Monitoring & Observability
-
-The architecture provides several points for monitoring:
-
-### Streaming
-
-- Kafka topic throughput.
-- Consumer processing rate.
-- Consumer lag.
-- Transaction volume.
-
-### Model
-
-- Stage 1 anomaly rate.
-- Reconstruction-loss distribution.
-- Stage 2 invocation rate.
-- Fraud probability distribution.
-- High-risk alert rate.
-- Model drift indicators.
-
-### Database
-
-- Transaction counts.
-- Hourly anomaly metrics.
-- Fraud decisions.
-- Processing timestamps.
-- Historical model outputs.
-
----
-
-# 📌 Project Highlights
-
-This project demonstrates several production-oriented machine-learning engineering concepts:
-
-- Real-time event streaming with Kafka.
-- Stateful time-series processing.
-- Unsupervised anomaly detection.
-- Supervised fraud classification.
-- ONNX model deployment.
-- Low-latency inference.
-- Asynchronous database persistence.
-- REST API development with FastAPI.
-- PostgreSQL analytical views.
-- Docker-based microservice deployment.
-- Automated testing with pytest.
-
----
-
-# Future Improvements
-
-Potential extensions include:
-
-- Kafka consumer groups for horizontal scaling.
-- Redis-based distributed rolling-window state.
-- Prometheus/Grafana monitoring.
-- Model versioning and registry integration.
-- MLflow experiment tracking.
-- Automated model retraining.
-- Concept-drift detection.
-- Dynamic anomaly thresholds.
-- Dynamic fraud probability thresholds.
-- Dead-letter Kafka topics for malformed events.
-- Exactly-once or idempotent event processing.
-- Kubernetes deployment.
-- Automated CI/CD model validation.
-- Real-time alert delivery through email, Slack, or webhook integrations.
-
----
-
-# 📄 License
-
-Distributed under the **MIT License**.
-
-See the `LICENSE` file for more information.
-
----
-
-# Project Summary
-
-The project implements an end-to-end real-time fraud detection architecture:
-
-**Kafka → FastAPI → LSTM Autoencoder → XGBoost → PostgreSQL**
-
-This architecture combines **stream processing, time-series deep learning, supervised machine learning, model optimization, asynchronous persistence, and containerized MLOps** into a single production-oriented fraud detection pipeline.
+Database tests skip when their URL is not set. ONNX inference tests skip if their model directory
+does not exist. CI trains its own synthetic artifact before testing and starts a disposable
+Compose stack for PostgreSQL and Kafka tests. The workflow is included; it has not been run on
+GitHub in this session.
+
+![Synthetic evaluation](reports/evaluation.png)
+
+**Synthetic evidence only:** the gate retained 75% of held-out fraud, and the cascade recalled
+65%. This is a documented failure of the validation gate to generalize, not a production-quality
+fraud detector. The measured local p95 scoring time is in `reports/benchmark.json`; it excludes
+Kafka, HTTP, database latency, and queueing. Do not present it as end-to-end latency or throughput.
+
+## Read next
+
+- [Detailed model and engineering choices](docs/DESIGN.md)
+- [Model card and evaluation limitations](docs/MODEL_CARD.md)
+- [Recommended improvements and portfolio narrative](docs/IMPROVEMENTS.md)
+- [Operation, restart, failure, and measurement guide](docs/RUNBOOK.md)
+- [Executed tests and measured results](reports/VALIDATION.md)
+- [Primary technical references](docs/REFERENCES.md)
+
+MIT licensed for the code. Dataset terms remain separate.
