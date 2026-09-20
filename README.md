@@ -1,19 +1,16 @@
-# PayWatch — recall-aware transaction triage
+# PayWatch — two-stage fraud/anomaly detection
 
-A portfolio project by Kishan Deka: a hand-built LSTM autoencoder, calibrated XGBoost,
-and a durable Kafka → FastAPI → PostgreSQL inference workflow.
+**Purpose:** A portfolio project that utilises : a hand-built LSTM autoencoder, calibrated XGBoost, and a durable Kafka → FastAPI → PostgreSQL inference workflow.
 
-The interesting question is **whether an anomaly gate saves enough classifier work to justify
-its missed fraud and latency**. PayWatch measures that trade-off instead of assuming that a
-more complicated pipeline is better. Its scientific emphasis is uncertainty, controlled
-comparisons, reproducibility, and diagnosing failure modes.
+The problem statement is **whether an anomaly gate saves enough classifier work to justify
+its missed fraud and latency**. PayWatch measures that trade-off instead of assuming that a more complicated pipeline is better. Its scientific emphasis is uncertainty, controlled comparisons, reproducibility, and diagnosing failure modes.
 
 **Status:** implemented and locally tested with synthetic data. Both ONNX exports were verified.
 Real credit-card metrics and full Docker/Kafka/PostgreSQL integration are not yet measured.
 See [validation evidence](reports/VALIDATION.md). The original README's 14.2 ms, 250 TPS,
 0.89 ROC-AUC, 0.86 PR-AUC, and 97% filtering claims are not treated as measured results.
 
-## What makes this project different
+## What different choices are made here
 
 - An LSTM cell implemented with explicit input, forget, candidate, and output gates; no
   `nn.LSTM` or `nn.LSTMCell` in the model. Forward and backward results are checked against
@@ -49,7 +46,7 @@ flowchart TD
 sent externally. An unscored transaction has `fraud_probability=null`, never a fabricated zero.
 The HTTP endpoint uses an independent demo stream so HTTP requests cannot change Kafka windows.
 
-## Data and scope
+## Dataset used
 
 Use the [ULB/Kaggle Credit Card Fraud Detection dataset](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud):
 `Time`, `Amount`, `V1`–`V28`, and `Class`. Download it manually into `data/creditcard.csv`.
@@ -96,7 +93,7 @@ paywatch/
 All reusable logic is in one importable package. The three entry-point folders contain no
 duplicated model or feature logic. One Docker image supports both consumer and producer.
 
-## Quick start: no accounts or cloud required
+## Quick start
 
 Use Python 3.11 or 3.12. Tested locally on Python 3.12/Linux CPU. From the repository root:
 
@@ -207,9 +204,9 @@ GitHub in this session.
 **Synthetic evidence only:** the gate retained 75% of held-out fraud, and the cascade recalled
 65%. This is a documented failure of the validation gate to generalize, not a production-quality
 fraud detector. The measured local p95 scoring time is in `reports/benchmark.json`; it excludes
-Kafka, HTTP, database latency, and queueing. Do not present it as end-to-end latency or throughput.
+Kafka, HTTP, database latency, and queueing.
 
-## Read next
+## Read more
 
 - [Detailed model and engineering choices](docs/DESIGN.md)
 - [Model card and evaluation limitations](docs/MODEL_CARD.md)
